@@ -211,6 +211,50 @@ export default class Runner {
       traceEnabled && (await pluginManager.start('trace'));
       // call the step definition
       await step.callback();
+
+      const page = driver.page;
+      const elasticApm = await page.evaluate('window.elasticApm');
+      if (elasticApm) {
+        try {
+          // @discuss/@review:
+
+          // Should we exclude the time invested on RUM from the synthetics test duration?
+          // There are customers that point the RUM to a proxy server, and perhaps rum/events will not be there, so...
+          // should we provide a new synthetic config to change that? like "click here to enable rum crosslinking..." and allow to modify
+          // certain properties if required (it's just an example)
+          await page.waitForResponse(
+            response => response.url().includes('/rum/events'), //
+            { timeout: 5000 }
+          );
+        } catch (e) {
+          // @discuss/@review:
+          // timeout throws an error, do we want to do something with that?
+        }
+
+        const rumData = await page.evaluate(() => {
+          const elasticApm = (window as any).elasticApm;
+          const transactions = elasticApm.synthetics.transactions;
+
+          //@discuss/@review:
+
+          //flush on each step since in theory a step should not care of previous steps' transactions
+          elasticApm.synthetics = {
+            transactions: [],
+          };
+
+          return {
+            serviceName:
+              elasticApm.serviceFactory.instances.ConfigService.config
+                .serviceName, //@discuss/@review: ugly, we recommend create a public api for this in RUM
+            transactions, //@discuss/@review: a step might have multiple transactions
+          };
+        });
+        data.rumInfo = {
+          serviceName: rumData.serviceName,
+          transactions: rumData.transactions,
+        };
+      }
+
       /**
        * Collect all step level metrics
        */
@@ -243,6 +287,7 @@ export default class Runner {
       }
     }
     log(`Runner: end step (${step.name})`);
+
     return data;
   }
 
@@ -350,6 +395,42 @@ export default class Runner {
         params: options.params,
       };
       await this.runBeforeHook(journey, hookArgs);
+      const page = context.driver.page;
+      page.on('load', async () => {
+        //@discuss/@review:
+        // Injecting RUM observer in order to gather all the finished transactions on every step
+        await page.evaluate(() => {
+          const elasticApm = (window as any).elasticApm;
+          if (!elasticApm) {
+            return;
+          }
+
+          elasticApm.synthetics = {
+            transactions: [],
+          };
+
+          ///@discuss/@review:
+
+          // Since RUM delays the end of the load transaction one second
+          // we can be sure this observe will be added before load transaction ends
+          // does it feel okay to assume that? or would you like to make sure that in a different way?
+          elasticApm.observe('transaction:end', tr => {
+            const observedTr = {
+              id: tr.id,
+              traceId: tr.traceId,
+              type: tr.type,
+              name: tr.name,
+              // @discuss/@review:
+
+              // in order to generate the APM ui link we need the fromRange too.
+              // Could we rely on any transaction field to calculate the fromRange, or is something that we can do
+              // in synthetics UI with a few calculations? Depending on the approach we follow, we might need
+              // to expose a new property
+            };
+            elasticApm.synthetics.transactions.push(observedTr);
+          });
+        });
+      });
       const stepResults = await this.runSteps(journey, context, options);
       /**
        * Mark journey as failed if any intermediate step fails

@@ -350,6 +350,7 @@ export default class JSONReporter extends BaseReporter {
       traces,
       metrics,
       filmstrips,
+      rumInfo,
     }: StepEndResult
   ) {
     this.writeMetrics(journey, step, 'relative_trace', traces);
@@ -371,6 +372,24 @@ export default class JSONReporter extends BaseReporter {
       });
     }
 
+    const rootFields = {};
+    if (rumInfo?.transactions.length) {
+      const [firstTransaction] = rumInfo?.transactions;
+      rootFields['service.name'] = rumInfo.serviceName;
+      rootFields['transaction.id'] = firstTransaction.id;
+      rootFields['transaction.name'] = firstTransaction.name;
+      rootFields['transaction.type'] = firstTransaction.type;
+      rootFields['trace.id'] = firstTransaction.traceId;
+      rootFields['rum_transactions'] = rumInfo?.transactions.map(
+        transaction => ({
+          id: transaction.id,
+          trace_id: transaction.traceId,
+          name: transaction.name,
+          type: transaction.type,
+        })
+      );
+    }
+
     this.writeJSON({
       type: 'step/end',
       journey,
@@ -388,6 +407,7 @@ export default class JSONReporter extends BaseReporter {
         status,
         pagemetrics,
       },
+      root_fields: rootFields,
     });
   }
 

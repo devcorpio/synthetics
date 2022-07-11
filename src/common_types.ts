@@ -270,6 +270,15 @@ export type StepResult = {
   filmstrips?: PluginOutput['filmstrips'];
   metrics?: PluginOutput['metrics'];
   traces?: PluginOutput['traces'];
+  rumInfo?: {
+    serviceName: string;
+    transactions: Array<{
+      id: string;
+      traceId: string;
+      name: string;
+      type: string;
+    }>;
+  };
 };
 
 /** Reporter and Runner contract */
